@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"reflect"
 	"sync/atomic"
 
@@ -96,6 +97,11 @@ func (p *program) Log(format string, args ...interface{}) {
 func (p *program) run() {
 	defer close(p.done)
 
+	// handle interrupt manually
+	// otherwise, UDP listeners are not closed on Mac OS X.
+	sigInt := make(chan os.Signal, 1)
+	signal.Notify(sigInt, os.Interrupt)
+
 outer:
 	for {
 		select {
@@ -106,10 +112,15 @@ outer:
 				break outer
 			}
 
+		case <-sigInt:
+			break outer
+
 		case <-p.terminate:
 			break outer
 		}
 	}
+
+	signal.Stop(sigInt)
 
 	p.closeResources()
 }
