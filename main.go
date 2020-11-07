@@ -97,7 +97,7 @@ func (p *program) Log(format string, args ...interface{}) {
 func (p *program) run() {
 	defer close(p.done)
 
-	// handle interrupt manually
+	// handle shutdown manually
 	// otherwise, UDP listeners are not closed on Mac OS X.
 	sigInt := make(chan os.Signal, 1)
 	signal.Notify(sigInt, os.Interrupt)
