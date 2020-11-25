@@ -101,6 +101,11 @@ outer:
 	for {
 		select {
 		case conn := <-cm.serverTcp.Accept():
+			if conn.RemoteAddr() == nil {
+				conn.Close()
+				continue
+			}
+
 			c := client.New(cm.rtspPort, cm.readTimeout, cm.writeTimeout,
 				cm.runOnConnect, cm.runOnConnectRestart, cm.protocols, &cm.wg,
 				cm.stats, cm.serverUdpRtp, cm.serverUdpRtcp, conn, cm)
