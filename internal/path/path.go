@@ -123,9 +123,8 @@ type clientState int
 
 const (
 	clientStateWaitingDescribe clientState = iota
-	clientStatePrePlay
+	clientStateIdle
 	clientStatePlay
-	clientStatePreRecord
 	clientStateRecord
 	clientStatePreRemove
 )
@@ -342,18 +341,7 @@ outer:
 			close(req.res)
 
 		case req := <-pa.clientRemove:
-			if _, ok := pa.clients[req.client]; !ok {
-				close(req.res)
-				continue
-			}
-
-			if pa.clients[req.client] != clientStatePreRemove {
-				pa.removeClient(req.client)
-			}
-
-			delete(pa.clients, req.client)
-			pa.clientsWg.Done()
-
+			pa.onClientRemove(req.client)
 			close(req.res)
 
 		case <-pa.terminate:
@@ -694,7 +682,7 @@ func (pa *Path) onClientSetupPlay(c *client.Client, trackID int) error {
 			pa.runOnDemandCloseTimerStarted = false
 		}
 
-		pa.addClient(c, clientStatePrePlay)
+		pa.addClient(c, clientStateIdle)
 	}
 
 	return nil
@@ -706,18 +694,17 @@ func (pa *Path) onClientPlay(c *client.Client) {
 		return
 	}
 
-	if state != clientStatePrePlay {
-		return
+	switch state {
+	case clientStateIdle:
+		atomic.AddInt64(pa.stats.CountReaders, 1)
+		pa.clients[c] = clientStatePlay
+		pa.readers.add(c)
 	}
-
-	atomic.AddInt64(pa.stats.CountReaders, 1)
-	pa.clients[c] = clientStatePlay
-
-	pa.readers.add(c)
 }
 
 func (pa *Path) onClientAnnounce(c *client.Client, tracks gortsplib.Tracks) error {
-	if _, ok := pa.clients[c]; ok {
+	_, ok := pa.clients[c]
+	if ok {
 		return fmt.Errorf("already subscribed")
 	}
 
@@ -725,7 +712,7 @@ func (pa *Path) onClientAnnounce(c *client.Client, tracks gortsplib.Tracks) erro
 		return fmt.Errorf("someone is already publishing to path '%s'", pa.name)
 	}
 
-	pa.addClient(c, clientStatePreRecord)
+	pa.addClient(c, clientStateIdle)
 
 	pa.source = c
 	pa.sourceTrackCount = len(tracks)
@@ -739,14 +726,12 @@ func (pa *Path) onClientRecord(c *client.Client) {
 		return
 	}
 
-	if state != clientStatePreRecord {
-		return
+	switch state {
+	case clientStateIdle:
+		atomic.AddInt64(pa.stats.CountPublishers, 1)
+		pa.clients[c] = clientStateRecord
+		pa.onSourceSetReady()
 	}
-
-	atomic.AddInt64(pa.stats.CountPublishers, 1)
-	pa.clients[c] = clientStateRecord
-
-	pa.onSourceSetReady()
 }
 
 func (pa *Path) onClientPause(c *client.Client) {
@@ -755,17 +740,37 @@ func (pa *Path) onClientPause(c *client.Client) {
 		return
 	}
 
-	if state == clientStatePlay {
+	switch state {
+	case clientStatePlay:
 		atomic.AddInt64(pa.stats.CountReaders, -1)
-		pa.clients[c] = clientStatePrePlay
-
+		pa.clients[c] = clientStateIdle
 		pa.readers.remove(c)
 
-	} else if state == clientStateRecord {
+	case clientStateRecord:
 		atomic.AddInt64(pa.stats.CountPublishers, -1)
-		pa.clients[c] = clientStatePreRecord
-
+		pa.clients[c] = clientStateIdle
 		pa.onSourceSetNotReady()
+	}
+}
+
+func (pa *Path) onClientRemove(c *client.Client) {
+	state, ok := pa.clients[c]
+	if !ok {
+		return
+	}
+
+	switch state {
+	case clientStateWaitingDescribe,
+		clientStateIdle,
+		clientStatePlay,
+		clientStateRecord:
+		pa.removeClient(c)
+		delete(pa.clients, c)
+		pa.clientsWg.Done()
+
+	case clientStatePreRemove:
+		delete(pa.clients, c)
+		pa.clientsWg.Done()
 	}
 }
 
