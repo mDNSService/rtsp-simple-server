@@ -35,9 +35,9 @@ func decrypt(key string, byts []byte) ([]byte, error) {
 	var secretKey [32]byte
 	copy(secretKey[:], key)
 
-	var decryptNonce [24]byte
-	copy(decryptNonce[:], enc[:24])
-	decrypted, ok := secretbox.Open(nil, enc[24:], &decryptNonce, &secretKey)
+	var nonce [24]byte
+	copy(nonce[:], enc[:24])
+	decrypted, ok := secretbox.Open(nil, enc[24:], &nonce, &secretKey)
 	if !ok {
 		return nil, fmt.Errorf("decryption error")
 	}
